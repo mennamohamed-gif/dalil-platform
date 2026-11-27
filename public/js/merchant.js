@@ -53,6 +53,7 @@ async function loadDash() {
     return;
   }
   renderShell();
+  startStream();
 }
 
 function renderShell() {
@@ -113,7 +114,12 @@ function ordersView() {
       ${stats.map(s => `<div class="stat-card"><span class="ficon" style="background:${s.c};color:#fff">${icon(s.ic)}</span><span><b>${s.n}</b><span>${s.l}</span></span></div>`).join('')}
     </div>
     <div class="panel">
-      <div class="panel-head"><h3>كل الطلبات (${os.length})</h3><button class="btn btn-sm btn-ghost" onclick="refresh()">${icon('clock')} تحديث</button></div>
+      <div class="panel-head"><h3>كل الطلبات (${os.length})</h3>
+        <span style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-sm btn-ghost" id="alertsBtn" onclick="enableAlerts()">🔔 فعّل تنبيه الصوت</button>
+          <button class="btn btn-sm btn-ghost" onclick="refresh()">${icon('clock')} تحديث</button>
+        </span>
+      </div>
       <div class="table-wrap">
       ${!os.length ? `<div class="empty">${icon('bell')}<b>لا توجد طلبات بعد</b>شارك رابط صفحتك مع عملائك</div>` : `
       <table class="table">
@@ -121,7 +127,7 @@ function ordersView() {
         <tbody>
           ${os.map(o => `
           <tr>
-            <td><b>${esc(o.code)}</b><br><span class="text-muted" style="font-size:12px">${fmtDate(o.created_at)}<br>${o.type === 'booking' ? 'حجز موعد' : o.fulfillment === 'delivery' ? 'طلب توصيل' : 'طلب استلام'}</span></td>
+            <td><b>${esc(o.code)}</b><br><span class="text-muted" style="font-size:12px" dir="ltr">${esc(o.track_code || '')}</span><br><span class="text-muted" style="font-size:12px">${fmtDate(o.created_at)}<br>${o.type === 'booking' ? 'حجز موعد' : o.fulfillment === 'delivery' ? 'طلب توصيل' : 'طلب استلام'}</span></td>
             <td><b>${esc(o.customer.name)}</b><br><a href="tel:${esc(o.customer.phone)}" style="color:var(--blue);font-size:13px" dir="ltr">${esc(o.customer.phone)}</a></td>
             <td style="max-width:280px">${o.items.map(i => `• ${esc(i.name)} × ${i.qty}`).join('<br>')}
               ${o.appointment ? `<br><span style="color:var(--purple-2)">${icon('calendar')} ${esc(o.appointment.date)} — ${esc(o.appointment.time)}</span>` : ''}
@@ -169,6 +175,7 @@ function productsView() {
     <div class="pgrid">
       ${ps.map(p => `
       <div class="pitem ${p.available === false ? 'unavailable' : ''}" style="${p.available === false ? 'opacity:.55' : ''}">
+        ${p.image ? `<img src="${esc(p.image)}" alt="" style="width:100%;height:120px;object-fit:cover;border-radius:14px;margin-bottom:10px">` : ''}
         <div class="flex-between">
           <b>${esc(p.name)}</b>
           <span class="kind-badge ${p.kind === 'service' ? 'kind-service' : 'kind-product'}">${p.kind === 'service' ? 'خدمة' : 'منتج'}</span>
@@ -184,6 +191,112 @@ function productsView() {
         <label class="avail-toggle"><input type="checkbox" ${p.available !== false ? 'checked' : ''} onchange="toggleAvail('${p.id}', this.checked)"> متاح للطلب</label>
       </div>`).join('')}
     </div>`}`;
+}
+
+/* ---------- صور المنتجات + تنبيه الطلبات ---------- */
+
+function compressImage(file) {
+  return new Promise((resolve, reject) => {
+    if (!/^image\//.test(file.type || '')) return reject(new Error('اختار صورة صحيحة'));
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('مش قادر أقرأ الصورة'));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('مش قادر أفتح الصورة'));
+      img.onload = () => {
+        const steps = [[1000, 0.78], [800, 0.7], [640, 0.6], [480, 0.5]];
+        for (const [side, q] of steps) {
+          const scale = Math.min(1, side / Math.max(img.width, img.height));
+          const w = Math.max(1, Math.round(img.width * scale));
+          const h = Math.max(1, Math.round(img.height * scale));
+          const cv = document.createElement('canvas');
+          cv.width = w; cv.height = h;
+          const ctx = cv.getContext('2d');
+          ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);
+          ctx.drawImage(img, 0, 0, w, h);
+          const out = cv.toDataURL('image/jpeg', q);
+          if (out.length < 1900000) return resolve(out);
+        }
+        reject(new Error('الصورة كبيرة جداً، جرب صورة أصغر'));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+let audioCtx = null;
+function beep() {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const t0 = audioCtx.currentTime;
+    [0, 0.25].forEach(off => {
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.type = 'sine'; o.frequency.value = 880;
+      g.gain.setValueAtTime(0.0001, t0 + off);
+      g.gain.exponentialRampToValueAtTime(0.35, t0 + off + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + off + 0.22);
+      o.connect(g); g.connect(audioCtx.destination);
+      o.start(t0 + off); o.stop(t0 + off + 0.24);
+    });
+  } catch (e) {}
+}
+
+window.enableAlerts = async function () {
+  try { beep(); } catch (e) {}
+  if ('Notification' in window && Notification.permission !== 'granted') {
+    try { await Notification.requestPermission(); } catch (e) {}
+  }
+  const b = document.getElementById('alertsBtn');
+  if (b) b.innerHTML = (('Notification' in window && Notification.permission === 'granted') ? '✅ التنبيهات شغالة' : '🔔 فعّل التنبيهات من إعدادات المتصفح');
+  toast('التنبيهات اتفعلت على الجهاز ده');
+};
+
+function notifyNewOrder(order) {
+  beep();
+  try {
+    if ('Notification' in window && Notification.permission === 'granted') {
+      new Notification('طلب جديد — ' + order.store_name, { body: order.customer.name + ' • ' + money(order.total), tag: order.id });
+    }
+  } catch (e) {}
+  const base = 'طلب جديد 🔔';
+  if (!document.title.startsWith(base)) {
+    const old = document.title;
+    document.title = base + ' — ' + old;
+    setTimeout(() => { if (document.title.startsWith(base)) document.title = old; }, 20000);
+  }
+  toast('🔔 طلب جديد من ' + order.customer.name);
+}
+
+let es = null;
+function startStream() {
+  if (!('EventSource' in window)) return;
+  try { if (es) es.close(); } catch (e) {}
+  es = new EventSource('/api/merchant/stream?token=' + encodeURIComponent(API.token()));
+  es.onmessage = ev => {
+    let d = null;
+    try { d = JSON.parse(ev.data); } catch (e) { return; }
+    if (!d || d.type !== 'order') return;
+    if (DATA && DATA.orders) DATA.orders.unshift(d.order);
+    notifyNewOrder(d.order);
+    const modalOpen = document.getElementById('modalVeil').classList.contains('open');
+    if (!modalOpen) renderShell();
+  };
+  es.onerror = () => {
+    // إعادة الاتصال تلقائية من المتصفح؛ لو الطلب اتقفل تمامًا نرجع للتحديث الدوري
+  };
+  if (!window.__pollTimer) {
+    window.__pollTimer = setInterval(() => {
+      if (!API.token()) return;
+      if (es && es.readyState === 1) return;
+      API.get('/api/merchant/overview').then(d => {
+        const known = new Set((DATA.orders || []).map(o => o.id));
+        const fresh = d.orders.filter(o => !known.has(o.id));
+        DATA = d;
+        if (fresh.length) { fresh.forEach(notifyNewOrder); renderShell(); }
+      }).catch(() => {});
+    }, 25000);
+  }
 }
 
 window.openProductModal = function (pid) {
@@ -205,6 +318,11 @@ window.openProductModal = function (pid) {
         </div>
       </div>
       <div class="field"><label>مدة الخدمة (اختياري، للخدمات)</label><input name="duration" value="${p ? esc(p.duration || '') : ''}" placeholder="مثال: 30 دقيقة"></div>
+      <div class="field">
+        <label>صورة الصنف (اختياري)</label>
+        <input name="photo" type="file" accept="image/*">
+        <div id="pPhotoPrev" style="margin-top:8px">${p && p.image ? `<img src="${esc(p.image)}" alt="" style="max-width:150px;border-radius:14px">` : '<span class="text-muted" style="font-size:12.5px">من غير صورة هيظهر بشكل مرتب بالنص بس</span>'}</div>
+      </div>
       <div class="modal-actions">
         <button class="btn btn-gold" type="submit">${icon('check')} حفظ</button>
         <button class="btn btn-ghost" type="button" onclick="closeModal()">إلغاء</button>
@@ -217,8 +335,14 @@ window.openProductModal = function (pid) {
     const f = e.target;
     const body = { name: f.name.value, description: f.description.value, price: +f.price.value, kind: f.kind.value, duration: f.duration.value };
     try {
-      if (p) await API.put('/api/merchant/products/' + p.id, body);
-      else await API.post('/api/merchant/products', body);
+      let saved = p;
+      if (p) { const r = await API.put('/api/merchant/products/' + p.id, body); saved = r.product || p; }
+      else { const r = await API.post('/api/merchant/products', body); saved = r.product; }
+      const file = f.photo && f.photo.files && f.photo.files[0];
+      if (file && saved && saved.id) {
+        const dataUrl = await compressImage(file);
+        await API.post('/api/merchant/products/' + saved.id + '/image', { data: dataUrl });
+      }
       closeModal();
       toast(p ? 'تم التعديل — ظاهر للناس الآن' : 'تمت الإضافة — ظاهر للناس الآن');
       await window.refresh();
