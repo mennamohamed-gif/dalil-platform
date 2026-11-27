@@ -277,6 +277,9 @@ function rateLimit(key, max, windowMs) {
   if (rateBuckets.size > 5000) { for (const [k, v] of rateBuckets) if (now > v.reset) rateBuckets.delete(k); }
   return rec.n <= max;
 }
+function publicComplaint(c) {
+  return { id: c.id, store_id: c.store_id, store_name: c.store_name, order_code: c.order_code || '', name: c.name, phone: c.phone, message: c.message, status: c.status || 'new', created_at: c.created_at, resolved_at: c.resolved_at || null, resolved_by: c.resolved_by || '' };
+}
 function publicOrder(o) {
   return { id: o.id, code: o.code, track_code: o.track_code || '', store_id: o.store_id, store_name: o.store_name, type: o.type, items: o.items, customer: o.customer, appointment: o.appointment, fulfillment: o.fulfillment, delivery_fee: o.delivery_fee, total: o.total, status: o.status, payment: o.payment === undefined ? 'cash' : o.payment, payment_ref: o.payment_ref || '', created_at: o.created_at };
 }
@@ -328,6 +331,74 @@ function route(method, pattern, handler) {
 }
 
 /* ---------- واجهات عامة ---------- */
+
+/* ---------- الشكاوى ---------- */
+route('POST', '/api/complaints', async (req, res) => {
+  if (!rateLimit('complaint:' + clientIp(req), 5, 30 * 60000)) return fail(res, 429, 'وصلتنا شكاوى كتير من نفس الجهاز — استنى شوية وحاول تاني');
+  const b = await readBody(req);
+  const store = db.stores.find(x => x.id === String(b.store_id || ''));
+  if (!store) return fail(res, 404, 'المتجر غير موجود');
+  const name = String(b.name || '').trim();
+  if (name.length < 2) return fail(res, 400, 'اكتب اسمك');
+  const phone = cleanPhone(b.phone);
+  if (!/^01[0-9]{9}$/.test(phone)) return fail(res, 400, 'اكتب رقم موبايل صحيح (11 رقم يبدأ بـ 01)');
+  const message = String(b.message || '').trim();
+  if (message.length < 10) return fail(res, 400, 'اكتب تفاصيل الشكوى (10 حروف على الأقل)');
+  if (message.length > 2000) return fail(res, 400, 'الشكوى طويلة جداً');
+  let orderCode = String(b.order_code || '').trim().toUpperCase();
+  if (orderCode) {
+    const o = db.orders.find(x => x.store_id === store.id && (x.code === orderCode || String(x.track_code || '').replace('-', '') === orderCode.replace('-', '')));
+    if (!o) return fail(res, 400, 'مفيش طلب بالكود ده في المتجر ده');
+    orderCode = o.code;
+  }
+  const c = {
+    id: id('c'), store_id: store.id, store_name: store.name, order_code: orderCode,
+    name, phone, message, status: 'new', created_at: nowISO(),
+  };
+  db.complaints.unshift(c);
+  await saveDB();
+  sendJSON(res, 201, { complaint: { id: c.id, status: c.status } });
+});
+
+route('GET', '/api/admin/complaints', (req, res) => {
+  requireAdmin(req, res) || void 0;
+  const u = authUser(req);
+  if (!u || u.user.role !== 'admin') return;
+  sendJSON(res, 200, { complaints: db.complaints.map(publicComplaint) });
+});
+
+route('PUT', '/api/admin/complaints/:id', async (req, res, q, p) => {
+  const u = requireAdmin(req, res); if (!u) return;
+  const c = db.complaints.find(x => x.id === p.id);
+  if (!c) return fail(res, 404, 'الشكوى غير موجودة');
+  const b = await readBody(req);
+  if (b.status === 'new' || b.status === 'resolved') {
+    c.status = b.status;
+    c.resolved_at = b.status === 'resolved' ? nowISO() : null;
+    c.resolved_by = b.status === 'resolved' ? 'admin' : '';
+    await saveDB();
+  }
+  sendJSON(res, 200, { complaint: publicComplaint(c) });
+});
+
+route('GET', '/api/merchant/complaints', (req, res) => {
+  const u = requireMerchant(req, res); if (!u) return;
+  sendJSON(res, 200, { complaints: db.complaints.filter(c => c.store_id === u.store_id).map(publicComplaint) });
+});
+
+route('PUT', '/api/merchant/complaints/:id', async (req, res, q, p) => {
+  const u = requireMerchant(req, res); if (!u) return;
+  const c = db.complaints.find(x => x.id === p.id && x.store_id === u.store_id);
+  if (!c) return fail(res, 404, 'الشكوى غير موجودة');
+  const b = await readBody(req);
+  if (b.status === 'new' || b.status === 'resolved') {
+    c.status = b.status;
+    c.resolved_at = b.status === 'resolved' ? nowISO() : null;
+    c.resolved_by = b.status === 'resolved' ? 'merchant' : '';
+    await saveDB();
+  }
+  sendJSON(res, 200, { complaint: publicComplaint(c) });
+});
 
 /* بوابة الدفع: المكان الجاهز للربط لاحقاً — لما يبقى عندنا مزود، الدالة دي تتحول لاستدعاء حقيقي */
 function paymentGatewayReady() { return Boolean(process.env.PAYMENT_GATEWAY_KEY); }
@@ -487,6 +558,7 @@ route('GET', '/api/merchant/overview', (req, res) => {
     store: publicStore(store),
     products: db.products.filter(p => p.store_id === store.id).map(publicProduct),
     orders: db.orders.filter(o => o.store_id === store.id).map(publicOrder),
+    complaints: db.complaints.filter(c => c.store_id === store.id).map(publicComplaint),
   });
 });
 
@@ -622,11 +694,14 @@ route('GET', '/api/admin/overview', (req, res) => {
       orders: db.orders.length,
       new_orders: db.orders.filter(o => o.status === 'new').length,
       revenue: db.orders.filter(o => o.status !== 'cancelled').reduce((t, o) => t + o.total, 0),
+      complaints: db.complaints.length,
+      new_complaints: db.complaints.filter(c => (c.status || 'new') === 'new').length,
     },
     categories: db.categories,
     stores,
     orders: db.orders.slice(0, 200).map(publicOrder),
     users: db.users.map(u2 => ({ id: u2.id, username: u2.username, role: u2.role, name: u2.name, store_id: u2.store_id })),
+    complaints: db.complaints.slice(0, 300).map(publicComplaint),
   });
 });
 
@@ -781,6 +856,7 @@ async function boot() {
   for (let attempt = 1; attempt <= 5; attempt++) {
     try {
       await loadDB();
+      if (!Array.isArray(db.complaints)) db.complaints = [];
       if (ADMIN_PASSWORD) {
         const adm = db.users.find(u => u.username === 'admin');
         if (adm && !verifyPassword(ADMIN_PASSWORD, adm)) {
