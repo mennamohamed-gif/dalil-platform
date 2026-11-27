@@ -81,6 +81,7 @@ function productHTML(p) {
   const off = p.available === false;
   return `
   <div class="product-card ${off ? 'unavailable' : ''}">
+    ${p.image ? `<img src="${esc(p.image)}" alt="${esc(p.name)}" loading="lazy" style="width:100%;height:150px;object-fit:cover;border-radius:14px;margin-bottom:10px">` : ''}
     <div class="product-top">
       <h4>${esc(p.name)}</h4>
       <span class="kind-badge ${p.kind === 'service' ? 'kind-service' : 'kind-product'}">${p.kind === 'service' ? 'خدمة/حجز' : 'منتج'}</span>
@@ -212,6 +213,14 @@ window.openCart = function () {
     };
     try {
       const { order } = await API.post('/api/orders', payload);
+      if (order && order.track_code) {
+        try {
+          const key = 'dalil_codes';
+          const list = JSON.parse(localStorage.getItem(key) || '[]').filter(c => c !== order.track_code);
+          list.unshift(order.track_code);
+          localStorage.setItem(key, JSON.stringify(list.slice(0, 20)));
+        } catch (e) {}
+      }
       cart = {};
       updateFab();
       renderStore();
@@ -246,10 +255,11 @@ function showSuccess(order) {
         <h3>${order.type === 'booking' ? 'تم إرسال الحجز بنجاح!' : 'تم إرسال الطلب بنجاح!'}</h3>
         <p class="text-muted mt-2">رقم ${order.type === 'booking' ? 'الحجز' : 'الطلب'} الخاص بك:</p>
         <div class="order-code">${esc(order.code)}</div>
+        ${order.track_code ? `<p class="text-muted mt-2" style="font-size:13px">كود تتبع الطلب (احتفظ بيه):</p><div class="order-code" dir="ltr" style="letter-spacing:2px">${esc(order.track_code)}</div>` : ''}
         ${order.appointment ? `<p class="text-muted">الموعد: ${esc(order.appointment.date)} — ${esc(order.appointment.time)}</p>` : ''}
         <p class="text-muted">الإجمالي: <b style="color:var(--gold-2)">${money(order.total)}</b></p>
-        <p class="text-muted mt-2" style="font-size:13px">هيتم مراجعة ${order.type === 'booking' ? 'حجزك' : 'طلبك'} من ${esc(order.store_name)} وتقدر تتابع حالته برقم موبايلك.</p>
-        <a class="btn mt-3" href="/track.html?phone=${encodeURIComponent(order.customer.phone)}">${icon('search')} تتبع الحالة</a>
+        <p class="text-muted mt-2" style="font-size:13px">هيتم مراجعة ${order.type === 'booking' ? 'حجزك' : 'طلبك'} من ${esc(order.store_name)}. كود التتبع محفوظ على الجهاز ده، وتقدر تتابع بيه من صفحة التتبع.</p>
+        <a class="btn mt-3" href="/track.html${order.track_code ? '?code=' + encodeURIComponent(order.track_code) : ''}">${icon('search')} تتبع الحالة</a>
       </div>
     </div>`;
 }
