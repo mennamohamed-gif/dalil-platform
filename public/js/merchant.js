@@ -127,7 +127,7 @@ function ordersView() {
         <tbody>
           ${os.map(o => `
           <tr>
-            <td><b>${esc(o.code)}</b><br><span class="text-muted" style="font-size:12px" dir="ltr">${esc(o.track_code || '')}</span><br><span class="text-muted" style="font-size:12px">${fmtDate(o.created_at)}<br>${o.type === 'booking' ? 'حجز موعد' : o.fulfillment === 'delivery' ? 'طلب توصيل' : 'طلب استلام'}</span></td>
+            <td><b>${esc(o.code)}</b><br><span class="text-muted" style="font-size:12px" dir="ltr">${esc(o.track_code || '')}</span><br><span class="text-muted" style="font-size:12px">${fmtDate(o.created_at)}<br>${o.type === 'booking' ? 'حجز موعد' : o.fulfillment === 'delivery' ? 'طلب توصيل' : 'طلب استلام'}<br>${o.payment === 'instapay' ? 'إنستاباي — مرجع: ' + esc(o.payment_ref || '') : (o.payment === 'cash' ? 'كاش عند الاستلام' : '')}</span></td>
             <td><b>${esc(o.customer.name)}</b><br><a href="tel:${esc(o.customer.phone)}" style="color:var(--blue);font-size:13px" dir="ltr">${esc(o.customer.phone)}</a></td>
             <td style="max-width:280px">${o.items.map(i => `• ${esc(i.name)} × ${i.qty}`).join('<br>')}
               ${o.appointment ? `<br><span style="color:var(--purple-2)">${icon('calendar')} ${esc(o.appointment.date)} — ${esc(o.appointment.time)}</span>` : ''}
@@ -406,6 +406,9 @@ function settingsView() {
           </div>
           <div class="field"><label>رسوم التوصيل (ج.م)</label><input name="delivery_fee" type="number" min="0" value="${s.delivery_fee || 0}"></div>
         </div>
+        <div class="field"><label>عنوان إنستاباي للتحويل (سيبها فاضية لو مش مفعّل)</label><input name="instapay" value="${esc(s.instapay || '')}" placeholder="مثال: 01012345671 أو name@instapay"></div>
+        <div class="form-grid-2" style="display:none">
+        </div>
         <button class="btn btn-gold" type="submit">${icon('check')} حفظ التعديلات</button>
       </form>
     </div></div>
@@ -428,7 +431,7 @@ function bindView(m) {
     try {
       const { store } = await API.put('/api/merchant/store', {
         name: f.name.value, phone: f.phone.value, description: f.description.value,
-        address: f.address.value, hours: f.hours.value, open_time: f.open_time.value, close_time: f.close_time.value,
+        address: f.address.value, hours: f.hours.value, open_time: f.open_time.value, close_time: f.close_time.value, instapay: f.instapay.value,
         delivery: f.delivery.value === '1', delivery_fee: +f.delivery_fee.value || 0,
       });
       DATA.store = store;
