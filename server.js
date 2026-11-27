@@ -334,8 +334,9 @@ function route(method, pattern, handler) {
 
 /* ---------- الشكاوى ---------- */
 route('POST', '/api/complaints', async (req, res) => {
-  if (!rateLimit('complaint:' + clientIp(req), 5, 30 * 60000)) return fail(res, 429, 'وصلتنا شكاوى كتير من نفس الجهاز — استنى شوية وحاول تاني');
   const b = await readBody(req);
+  // IP backstop عالي عشان شبكات الموبايل بتشارك نفس الـIP بين عملاء كتير
+  if (!rateLimit('complaint:ip:' + clientIp(req), 30, 60 * 60000)) return fail(res, 429, 'وصلتنا شكاوى كتير من نفس الجهاز — استنى شوية وحاول تاني');
   const store = db.stores.find(x => x.id === String(b.store_id || ''));
   if (!store) return fail(res, 404, 'المتجر غير موجود');
   const name = String(b.name || '').trim();
@@ -351,6 +352,8 @@ route('POST', '/api/complaints', async (req, res) => {
     if (!o) return fail(res, 400, 'مفيش طلب بالكود ده في المتجر ده');
     orderCode = o.code;
   }
+  // الحد الأساسي على رقم الموبايل نفسه (10 شكاوى في الساعة)
+  if (!rateLimit('complaint:ph:' + phone, 10, 60 * 60000)) return fail(res, 429, 'وصلتنا شكاوى كتير من الرقم ده — استنى شوية وحاول تاني');
   const c = {
     id: id('c'), store_id: store.id, store_name: store.name, order_code: orderCode,
     name, phone, message, status: 'new', created_at: nowISO(),
