@@ -110,3 +110,55 @@ function footerHTML() {
     </div>
   </footer>`;
 }
+
+/* ---------- الشكاوى ---------- */
+function openComplaintForm(opts) {
+  opts = opts || {};
+  let veil = document.getElementById('complaintVeil');
+  if (!veil) {
+    veil = document.createElement('div');
+    veil.id = 'complaintVeil';
+    veil.className = 'modal-veil';
+    veil.innerHTML = '<div class="modal" id="complaintModal"></div>';
+    document.body.appendChild(veil);
+  }
+  const modal = document.getElementById('complaintModal');
+  const storeLabel = opts.storeName ? `<p class="text-muted" style="font-size:13px;margin:0 0 12px">شكوى على: <b>${esc(opts.storeName)}</b>${opts.orderCode ? ' — طلب ' + esc(opts.orderCode) : ''}</p>` : '';
+  modal.innerHTML = `
+    <h3>تقديم شكوى</h3>
+    ${storeLabel}
+    <form id="complaintForm">
+      <div class="field"><label>اسمك *</label><input name="name" required placeholder="اكتب اسمك"></div>
+      <div class="field"><label>رقم الموبايل *</label><input name="phone" required inputmode="tel" maxlength="11" placeholder="01xxxxxxxxx"></div>
+      ${opts.orderCode ? '' : '<div class="field"><label>كود الطلب (لو الشكوى على طلب معين)</label><input name="order_code" dir="ltr" maxlength="12" placeholder="7K2M-9QX4"></div>'}
+      <div class="field"><label>تفاصيل الشكوى *</label><textarea name="message" required minlength="10" maxlength="2000" rows="4" placeholder="اكتب اللي حصل بالتفصيل"></textarea></div>
+      <div class="modal-actions">
+        <button class="btn btn-gold" type="submit">إرسال الشكوى</button>
+        <button class="btn btn-ghost" type="button" id="complaintCancel">إلغاء</button>
+      </div>
+    </form>`;
+  veil.classList.add('open');
+  veil.onclick = (e) => { if (e.target === veil) veil.classList.remove('open'); };
+  document.getElementById('complaintCancel').onclick = () => veil.classList.remove('open');
+  document.getElementById('complaintForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    const btn = f.querySelector('button[type=submit]');
+    btn.disabled = true; btn.textContent = 'جاري الإرسال...';
+    try {
+      await API.post('/api/complaints', {
+        store_id: opts.storeId || '',
+        order_code: opts.orderCode || (f.order_code ? f.order_code.value.trim() : ''),
+        name: f.name.value.trim(),
+        phone: f.phone.value.trim(),
+        message: f.message.value.trim(),
+      });
+      modal.innerHTML = `<div class="empty" style="padding:26px 10px">${icon('checkCircle')}<b>وصلتنا شكوتك</b>المحل والإدارة هيشوفوها وهيتابعوها معاك.</div>
+        <div class="modal-actions"><button class="btn btn-gold" type="button" id="complaintDone">تمام</button></div>`;
+      document.getElementById('complaintDone').onclick = () => veil.classList.remove('open');
+    } catch (err) {
+      toast(err.message || 'مش قادرين نبعت الشكوى دلوقتي', true);
+      btn.disabled = false; btn.textContent = 'إرسال الشكوى';
+    }
+  });
+}
