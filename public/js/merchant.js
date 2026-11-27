@@ -69,6 +69,7 @@ function renderShell() {
       <nav class="side-nav">
         <button data-v="orders" class="${view === 'orders' ? 'active' : ''}">${icon('bell')} الطلبات ${newCount ? `<span class="status-badge st-new" style="margin-inline-start:auto">${newCount}</span>` : ''}</button>
         <button data-v="products" class="${view === 'products' ? 'active' : ''}">${icon('box')} المنتجات والخدمات</button>
+        <button data-v="complaints" class="${view === 'complaints' ? 'active' : ''}">${icon('note')} الشكاوى ${(DATA.complaints || []).filter(c => (c.status || 'new') === 'new').length ? `<span class="status-badge st-new" style="margin-inline-start:auto">${(DATA.complaints || []).filter(c => (c.status || 'new') === 'new').length}</span>` : ''}</button>
         <button data-v="settings" class="${view === 'settings' ? 'active' : ''}">${icon('settings')} إعدادات المحل</button>
         <a href="/store.html?id=${encodeURIComponent(s.id)}" target="_blank">${icon('eye')} عرض صفحتي</a>
         <button id="logoutBtn">${icon('logout')} خروج</button>
@@ -94,6 +95,7 @@ function renderView() {
   const m = document.getElementById('dashMain');
   if (view === 'orders') m.innerHTML = ordersView();
   else if (view === 'products') m.innerHTML = productsView();
+  else if (view === 'complaints') m.innerHTML = complaintsView();
   else m.innerHTML = settingsView();
   bindView(m);
 }
@@ -452,3 +454,42 @@ function bindView(m) {
 
 /* بداية */
 if (API.token()) loadDash(); else renderLogin();
+
+/* ---------- الشكاوى ---------- */
+function complaintsView() {
+  const cs = DATA.complaints || [];
+  const open = cs.filter(c => (c.status || 'new') === 'new').length;
+  return `
+    <div class="flex-between mb-3">
+      <div><h2 class="dash-title">الشكاوى (${cs.length})</h2><p class="dash-sub" style="margin:4px 0 0">${open ? open + ' شكوى جديدة محتاجة متابعة' : 'مفيش شكاوى جديدة'}</p></div>
+      <button class="btn btn-sm btn-ghost" onclick="loadDash()">${icon('clock')} تحديث</button>
+    </div>
+    <div class="panel"><div class="table-wrap">
+    ${!cs.length ? `<div class="empty">${icon('note')}<b>لا توجد شكاوى</b>أي شكوى على محلك هتظهر هنا</div>` : `
+      <table class="table">
+        <thead><tr><th>الشكوى</th><th>العميل</th><th>التفاصيل</th><th>الحالة</th></tr></thead>
+        <tbody>
+          ${cs.map(c => `
+          <tr>
+            <td><b>${esc(c.order_code || 'بدون طلب')}</b><br><span class="text-muted" style="font-size:12px">${fmtDate(c.created_at)}</span></td>
+            <td><b>${esc(c.name)}</b><br><a href="tel:${esc(c.phone)}" style="color:var(--blue);font-size:13px" dir="ltr">${esc(c.phone)}</a></td>
+            <td style="max-width:320px">${esc(c.message)}${c.resolved_at ? `<br><span class="text-muted" style="font-size:12px">اتقفلت ${fmtDate(c.resolved_at)}</span>` : ''}</td>
+            <td><select class="status-select" onchange="merchantSetComplaint('${c.id}', this.value)">
+              <option value="new" ${(c.status || 'new') === 'new' ? 'selected' : ''}>جديدة</option>
+              <option value="resolved" ${c.status === 'resolved' ? 'selected' : ''}>تم حلها</option>
+            </select></td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`}
+    </div></div>`;
+}
+
+window.merchantSetComplaint = async function (cid, status) {
+  try {
+    await API.put('/api/merchant/complaints/' + cid, { status });
+    const c = (DATA.complaints || []).find(x => x.id === cid);
+    if (c) { c.status = status; c.resolved_at = status === 'resolved' ? new Date().toISOString() : null; }
+    toast(status === 'resolved' ? 'تم قفل الشكوى' : 'الشكوى رجعت جديدة');
+    renderShell();
+  } catch (e) { toast(e.message, true); }
+};
