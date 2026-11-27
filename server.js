@@ -11,6 +11,7 @@ const path = require('path');
 const crypto = require('crypto');
 
 const PORT = process.env.PORT || 3000;
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || ''; // كلمة سر الأدمن تُدار من متغير البيئة
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const DATA_DIR = path.join(ROOT, 'data');
@@ -143,7 +144,7 @@ function seed() {
   ];
 
   const users = [
-    makeUser('admin',  'dalil2026', 'admin',    'محمود عامر (الأدمن)', null),
+    makeUser('admin',  ADMIN_PASSWORD || 'dalil2026', 'admin', 'محمود عامر (الأدمن)', null),
     makeUser('shifaa', 'dalil2026', 'merchant', 'صيدلية الشفاء', 's_shifaa'),
     makeUser('prince', 'dalil2026', 'merchant', 'مطعم البرنس', 's_prince'),
     makeUser('ahmed',  'dalil2026', 'merchant', 'عيادة د. أحمد سمير', 's_ahmed'),
@@ -717,7 +718,19 @@ const server = http.createServer(async (req, res) => {
 
 async function boot() {
   for (let attempt = 1; attempt <= 5; attempt++) {
-    try { await loadDB(); return; }
+    try {
+      await loadDB();
+      if (ADMIN_PASSWORD) {
+        const adm = db.users.find(u => u.username === 'admin');
+        if (adm && !verifyPassword(ADMIN_PASSWORD, adm)) {
+          const { salt, hash } = hashPassword(ADMIN_PASSWORD);
+          adm.salt = salt; adm.password_hash = hash;
+          await saveDB();
+          console.log('تم تحديث كلمة سر الأدمن من متغير البيئة');
+        }
+      }
+      return;
+    }
     catch (e) {
       console.error(`محاولة تحميل البيانات رقم ${attempt} فشلت: ${e.message}`);
       if (attempt === 5) throw e;
@@ -736,7 +749,7 @@ for (const sig of ['SIGTERM', 'SIGINT']) {
 boot().then(() => {
   server.listen(PORT, () => {
     console.log('منصة دليل شغالة على: http://localhost:' + PORT);
-    console.log('حساب الأدمن: admin / dalil2026');
+    console.log(ADMIN_PASSWORD ? 'حساب الأدمن: admin (كلمة السر من متغير البيئة)' : 'حساب الأدمن: admin / dalil2026');
     console.log('حساب تاجر تجريبي: shifaa / dalil2026');
     console.log(DATABASE_URL ? 'التخزين: PostgreSQL' : 'التخزين: ملف data/db.json محلي');
   });
