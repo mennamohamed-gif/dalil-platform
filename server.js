@@ -16,6 +16,37 @@ const PUBLIC_DIR = path.join(ROOT, 'public');
 const DATA_DIR = path.join(ROOT, 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 
+/* ---- طبقة التخزين: PostgreSQL لو فيه DATABASE_URL، وإلا ملف JSON محلي ---- */
+const DATABASE_URL = (process.env.DATABASE_URL || '').trim();
+const DOC_TABLE = 'dalil_doc';
+let pgPool = null;
+let saveChain = Promise.resolve();
+
+function connString(url) {
+  try {
+    const u = new URL(url);
+    u.searchParams.delete('sslmode');
+    u.searchParams.delete('channel_binding');
+    u.searchParams.delete('uselibpqcompat');
+    return u.toString();
+  } catch (e) { return url; }
+}
+
+function pg() {
+  if (!pgPool) {
+    const { Pool } = require('pg');
+    pgPool = new Pool({
+      connectionString: connString(DATABASE_URL),
+      ssl: /neon\.tech|supabase\.co|aivencloud|sslmode=require/i.test(DATABASE_URL) ? { rejectUnauthorized: false } : undefined,
+      max: 4,
+      idleTimeoutMillis: 10000,
+      connectionTimeoutMillis: 15000,
+    });
+    pgPool.on('error', (e) => console.error('خطأ في اتصال قاعدة البيانات:', e.message));
+  }
+  return pgPool;
+}
+
 /* ------------------------- قاعدة البيانات ------------------------- */
 
 function nowISO() { return new Date().toISOString(); }
@@ -121,19 +152,46 @@ function seed() {
 }
 
 let db;
-function loadDB() {
+
+async function loadDB() {
+  if (DATABASE_URL) {
+    const p = pg();
+    await p.query(`CREATE TABLE IF NOT EXISTS ${DOC_TABLE} (id integer PRIMARY KEY, doc jsonb NOT NULL, updated_at timestamptz NOT NULL DEFAULT now())`);
+    const r = await p.query(`SELECT doc FROM ${DOC_TABLE} WHERE id = 1`);
+    if (r.rows.length) {
+      db = r.rows[0].doc;
+      console.log('تم تحميل البيانات من PostgreSQL');
+    } else {
+      db = seed();
+      await saveDB();
+      console.log('تم إنشاء البيانات التجريبية في PostgreSQL');
+    }
+    return;
+  }
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
   if (fs.existsSync(DB_FILE)) {
     db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
   } else {
     db = seed();
-    saveDB();
+    await saveDB();
   }
 }
+
 function saveDB() {
+  if (DATABASE_URL) {
+    const snapshot = JSON.stringify(db);
+    const run = saveChain.then(() => pg().query(
+      `INSERT INTO ${DOC_TABLE} (id, doc, updated_at) VALUES (1, $1::jsonb, now())
+       ON CONFLICT (id) DO UPDATE SET doc = EXCLUDED.doc, updated_at = now()`,
+      [snapshot]
+    ));
+    saveChain = run.catch(() => {});
+    return run;
+  }
   const tmp = DB_FILE + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify(db, null, 2));
   fs.renameSync(tmp, DB_FILE);
+  return Promise.resolve();
 }
 
 /* ------------------------- أدوات مساعدة ------------------------- */
@@ -257,7 +315,7 @@ route('POST', '/api/orders', async (req, res) => {
     total: subtotal + delivery_fee, status: 'new', created_at: nowISO(),
   };
   db.orders.unshift(order);
-  saveDB();
+  await saveDB();
   sendJSON(res, 201, { order: publicOrder(order) });
 });
 
@@ -276,13 +334,13 @@ route('POST', '/api/login', async (req, res) => {
   if (!user || !verifyPassword(b.password || '', user)) return fail(res, 401, 'اسم المستخدم أو كلمة السر غير صحيحة');
   const token = crypto.randomBytes(24).toString('hex');
   db.sessions[token] = { user_id: user.id, created_at: nowISO() };
-  saveDB();
+  await saveDB();
   sendJSON(res, 200, { token, role: user.role, name: user.name, store_id: user.store_id });
 });
 
-route('POST', '/api/logout', (req, res) => {
+route('POST', '/api/logout', async (req, res) => {
   const a = authUser(req);
-  if (a) { delete db.sessions[a.token]; saveDB(); }
+  if (a) { delete db.sessions[a.token]; await saveDB(); }
   sendJSON(res, 200, { ok: true });
 });
 
@@ -300,7 +358,7 @@ route('POST', '/api/change-password', async (req, res) => {
   if (!b.next || String(b.next).length < 6) return fail(res, 400, 'كلمة السر الجديدة 6 أحرف على الأقل');
   const { salt, hash } = hashPassword(b.next);
   a.user.salt = salt; a.user.password_hash = hash;
-  saveDB();
+  await saveDB();
   sendJSON(res, 200, { ok: true });
 });
 
@@ -333,7 +391,7 @@ route('PUT', '/api/merchant/store', async (req, res) => {
   }
   if (typeof b.delivery === 'boolean') store.delivery = b.delivery;
   if (b.delivery_fee != null && !isNaN(+b.delivery_fee) && +b.delivery_fee >= 0) store.delivery_fee = +b.delivery_fee;
-  saveDB();
+  await saveDB();
   sendJSON(res, 200, { store: publicStore(store) });
 });
 
@@ -345,7 +403,7 @@ route('POST', '/api/merchant/products', async (req, res) => {
   if (isNaN(price) || price < 0) return fail(res, 400, 'اكتب سعراً صحيحاً');
   const p = { id: id('p'), store_id: u.store_id, name: String(b.name).trim(), description: String(b.description || '').trim(), price, kind: b.kind === 'service' ? 'service' : 'product', duration: String(b.duration || '').trim(), image: String(b.image || '').trim(), available: b.available !== false };
   db.products.push(p);
-  saveDB();
+  await saveDB();
   sendJSON(res, 201, { product: publicProduct(p) });
 });
 
@@ -361,16 +419,16 @@ route('PUT', '/api/merchant/products/:id', async (req, res, q, p) => {
   if (typeof b.duration === 'string') prod.duration = b.duration.trim();
   if (typeof b.image === 'string') prod.image = b.image.trim();
   if (typeof b.available === 'boolean') prod.available = b.available;
-  saveDB();
+  await saveDB();
   sendJSON(res, 200, { product: publicProduct(prod) });
 });
 
-route('DELETE', '/api/merchant/products/:id', (req, res, q, p) => {
+route('DELETE', '/api/merchant/products/:id', async (req, res, q, p) => {
   const u = requireMerchant(req, res); if (!u) return;
   const i = db.products.findIndex(x => x.id === p.id && x.store_id === u.store_id);
   if (i === -1) return fail(res, 404, 'الصنف غير موجود');
   db.products.splice(i, 1);
-  saveDB();
+  await saveDB();
   sendJSON(res, 200, { ok: true });
 });
 
@@ -383,7 +441,7 @@ route('PUT', '/api/merchant/orders/:id', async (req, res, q, p) => {
   const b = await readBody(req);
   if (!ORDER_STATUSES.includes(b.status)) return fail(res, 400, 'حالة غير صحيحة');
   o.status = b.status;
-  saveDB();
+  await saveDB();
   sendJSON(res, 200, { order: publicOrder(o) });
 });
 
@@ -431,7 +489,7 @@ route('POST', '/api/admin/stores', async (req, res) => {
     owner = makeUser(uname, b.owner_password, 'merchant', s.name, s.id);
     db.users.push(owner);
   }
-  saveDB();
+  await saveDB();
   sendJSON(res, 201, { store: publicStore(s), owner: owner ? { username: owner.username } : null });
 });
 
@@ -448,11 +506,11 @@ route('PUT', '/api/admin/stores/:id', async (req, res, q, p) => {
   if (typeof b.featured === 'boolean') s.featured = b.featured;
   if (b.rating != null && !isNaN(+b.rating)) s.rating = Math.max(0, Math.min(5, +b.rating));
   if (b.status === 'active' || b.status === 'suspended') s.status = b.status;
-  saveDB();
+  await saveDB();
   sendJSON(res, 200, { store: publicStore(s) });
 });
 
-route('DELETE', '/api/admin/stores/:id', (req, res, q, p) => {
+route('DELETE', '/api/admin/stores/:id', async (req, res, q, p) => {
   const u = requireAdmin(req, res); if (!u) return;
   const i = db.stores.findIndex(x => x.id === p.id);
   if (i === -1) return fail(res, 404, 'المتجر غير موجود');
@@ -460,7 +518,7 @@ route('DELETE', '/api/admin/stores/:id', (req, res, q, p) => {
   db.products = db.products.filter(x => x.store_id !== p.id);
   const owner = db.users.find(x => x.store_id === p.id);
   if (owner) db.users = db.users.filter(x => x.id !== owner.id);
-  saveDB();
+  await saveDB();
   sendJSON(res, 200, { ok: true });
 });
 
@@ -470,7 +528,7 @@ route('POST', '/api/admin/categories', async (req, res) => {
   if (!b.name || String(b.name).trim().length < 2) return fail(res, 400, 'اكتب اسم التصنيف');
   const c = { id: id('c'), name: String(b.name).trim(), icon: String(b.icon || 'store'), color: String(b.color || '#6366f1') };
   db.categories.push(c);
-  saveDB();
+  await saveDB();
   sendJSON(res, 201, { category: c });
 });
 
@@ -482,17 +540,17 @@ route('PUT', '/api/admin/categories/:id', async (req, res, q, p) => {
   if (typeof b.name === 'string' && b.name.trim()) c.name = b.name.trim();
   if (typeof b.icon === 'string' && b.icon.trim()) c.icon = b.icon.trim();
   if (typeof b.color === 'string' && b.color.trim()) c.color = b.color.trim();
-  saveDB();
+  await saveDB();
   sendJSON(res, 200, { category: c });
 });
 
-route('DELETE', '/api/admin/categories/:id', (req, res, q, p) => {
+route('DELETE', '/api/admin/categories/:id', async (req, res, q, p) => {
   const u = requireAdmin(req, res); if (!u) return;
   if (db.stores.some(s => s.category_id === p.id)) return fail(res, 400, 'لا يمكن حذف تصنيف به محلات');
   const i = db.categories.findIndex(x => x.id === p.id);
   if (i === -1) return fail(res, 404, 'التصنيف غير موجود');
   db.categories.splice(i, 1);
-  saveDB();
+  await saveDB();
   sendJSON(res, 200, { ok: true });
 });
 
@@ -503,7 +561,7 @@ route('PUT', '/api/admin/orders/:id', async (req, res, q, p) => {
   const b = await readBody(req);
   if (!ORDER_STATUSES.includes(b.status)) return fail(res, 400, 'حالة غير صحيحة');
   o.status = b.status;
-  saveDB();
+  await saveDB();
   sendJSON(res, 200, { order: publicOrder(o) });
 });
 
@@ -515,7 +573,7 @@ route('POST', '/api/admin/users/:id/reset-password', async (req, res, q, p) => {
   if (!b.password || String(b.password).length < 6) return fail(res, 400, 'كلمة السر 6 أحرف على الأقل');
   const { salt, hash } = hashPassword(b.password);
   target.salt = salt; target.password_hash = hash;
-  saveDB();
+  await saveDB();
   sendJSON(res, 200, { ok: true });
 });
 
@@ -563,9 +621,32 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-loadDB();
-server.listen(PORT, () => {
-  console.log('منصة دليل شغالة على: http://localhost:' + PORT);
-  console.log('حساب الأدمن: admin / dalil2026');
-  console.log('حساب تاجر تجريبي: shifaa / dalil2026');
+async function boot() {
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    try { await loadDB(); return; }
+    catch (e) {
+      console.error(`محاولة تحميل البيانات رقم ${attempt} فشلت: ${e.message}`);
+      if (attempt === 5) throw e;
+      await new Promise(r => setTimeout(r, attempt * 2000));
+    }
+  }
+}
+
+for (const sig of ['SIGTERM', 'SIGINT']) {
+  process.on(sig, () => {
+    Promise.resolve(saveChain).catch(() => {}).then(() => (pgPool ? pgPool.end().catch(() => {}) : null)).then(() => process.exit(0));
+    setTimeout(() => process.exit(0), 5000).unref();
+  });
+}
+
+boot().then(() => {
+  server.listen(PORT, () => {
+    console.log('منصة دليل شغالة على: http://localhost:' + PORT);
+    console.log('حساب الأدمن: admin / dalil2026');
+    console.log('حساب تاجر تجريبي: shifaa / dalil2026');
+    console.log(DATABASE_URL ? 'التخزين: PostgreSQL' : 'التخزين: ملف data/db.json محلي');
+  });
+}).catch((e) => {
+  console.error('تعذّر تشغيل الخادم:', e.message);
+  process.exit(1);
 });
