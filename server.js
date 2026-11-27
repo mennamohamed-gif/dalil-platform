@@ -19,6 +19,7 @@ const DB_FILE = path.join(DATA_DIR, 'db.json');
 /* ---- طبقة التخزين: PostgreSQL لو فيه DATABASE_URL، وإلا ملف JSON محلي ---- */
 const DATABASE_URL = (process.env.DATABASE_URL || '').trim();
 const DOC_TABLE = 'dalil_doc';
+const IMG_DIR = path.join(DATA_DIR, 'images');
 let pgPool = null;
 let saveChain = Promise.resolve();
 
@@ -157,6 +158,7 @@ async function loadDB() {
   if (DATABASE_URL) {
     const p = pg();
     await p.query(`CREATE TABLE IF NOT EXISTS ${DOC_TABLE} (id integer PRIMARY KEY, doc jsonb NOT NULL, updated_at timestamptz NOT NULL DEFAULT now())`);
+    await p.query('CREATE TABLE IF NOT EXISTS dalil_images (id text PRIMARY KEY, mime text NOT NULL, bytes bytea NOT NULL, size integer NOT NULL, created_at timestamptz NOT NULL DEFAULT now())');
     const r = await p.query(`SELECT doc FROM ${DOC_TABLE} WHERE id = 1`);
     if (r.rows.length) {
       db = r.rows[0].doc;
@@ -194,6 +196,51 @@ function saveDB() {
   return Promise.resolve();
 }
 
+/* ---------------- صور المنتجات ---------------- */
+
+function newTrackCode() {
+  const A = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+  const b = crypto.randomBytes(8);
+  let out = '';
+  for (let i = 0; i < 8; i++) out += A[b[i] % A.length];
+  return out.slice(0, 4) + '-' + out.slice(4);
+}
+
+async function saveImage(mime, buf) {
+  const imgId = 'i_' + crypto.randomBytes(9).toString('hex');
+  if (DATABASE_URL) {
+    await pg().query('INSERT INTO dalil_images (id, mime, bytes, size) VALUES ($1, $2, $3, $4)', [imgId, mime, buf, buf.length]);
+  } else {
+    if (!fs.existsSync(IMG_DIR)) fs.mkdirSync(IMG_DIR, { recursive: true });
+    fs.writeFileSync(path.join(IMG_DIR, imgId), buf);
+    fs.writeFileSync(path.join(IMG_DIR, imgId + '.mime'), mime, 'utf8');
+  }
+  return imgId;
+}
+
+async function readImage(imgId) {
+  if (!/^i_[a-f0-9]{18}$/.test(imgId)) return null;
+  if (DATABASE_URL) {
+    const r = await pg().query('SELECT mime, bytes FROM dalil_images WHERE id = $1', [imgId]);
+    if (!r.rows.length) return null;
+    return { mime: r.rows[0].mime, buf: r.rows[0].bytes };
+  }
+  const f = path.join(IMG_DIR, imgId);
+  if (!fs.existsSync(f)) return null;
+  return { mime: fs.readFileSync(f + '.mime', 'utf8'), buf: fs.readFileSync(f) };
+}
+
+/* ---------------- بث الطلبات الجديدة للتاجر ---------------- */
+
+const orderStreams = new Set();
+function pushNewOrder(storeId, order) {
+  const payload = 'data: ' + JSON.stringify({ type: 'order', order: publicOrder(order) }) + '\n\n';
+  for (const st of orderStreams) {
+    if (st.storeId !== storeId) continue;
+    try { st.res.write(payload); } catch (e) { orderStreams.delete(st); }
+  }
+}
+
 /* ------------------------- أدوات مساعدة ------------------------- */
 
 function publicStore(s) {
@@ -203,7 +250,7 @@ function publicStore(s) {
 }
 function publicProduct(p) { const { available } = p; return Object.assign({}, p, { available: available !== false }); }
 function publicOrder(o) {
-  return { id: o.id, code: o.code, store_id: o.store_id, store_name: o.store_name, type: o.type, items: o.items, customer: o.customer, appointment: o.appointment, fulfillment: o.fulfillment, delivery_fee: o.delivery_fee, total: o.total, status: o.status, created_at: o.created_at };
+  return { id: o.id, code: o.code, track_code: o.track_code || '', store_id: o.store_id, store_name: o.store_name, type: o.type, items: o.items, customer: o.customer, appointment: o.appointment, fulfillment: o.fulfillment, delivery_fee: o.delivery_fee, total: o.total, status: o.status, created_at: o.created_at };
 }
 function cleanPhone(p) { return String(p || '').replace(/[^0-9+]/g, ''); }
 
@@ -312,17 +359,19 @@ route('POST', '/api/orders', async (req, res) => {
     type, items, customer: { name: String(customer.name).trim(), phone, address: String(customer.address || '').trim(), notes: String(customer.notes || '').trim() },
     appointment: type === 'booking' ? { date: b.appointment.date, time: b.appointment.time } : null,
     fulfillment: type === 'order' ? fulfillment : null, delivery_fee,
-    total: subtotal + delivery_fee, status: 'new', created_at: nowISO(),
+    total: subtotal + delivery_fee, status: 'new', track_code: newTrackCode(), created_at: nowISO(),
   };
   db.orders.unshift(order);
   await saveDB();
+  pushNewOrder(order.store_id, order);
   sendJSON(res, 201, { order: publicOrder(order) });
 });
 
 route('GET', '/api/orders', (req, res, q) => {
-  const phone = cleanPhone(q.phone);
-  if (!/^01[0-9]{9}$/.test(phone)) return fail(res, 400, 'اكتب رقم موبايل صحيح');
-  const list = db.orders.filter(o => o.customer.phone === phone).map(publicOrder);
+  const code = String(q.code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (code.length !== 8) return fail(res, 400, 'اكتب كود الطلب (8 حروف وأرقام)');
+  const list = db.orders.filter(o => o.track_code && o.track_code.replace('-', '') === code).map(publicOrder);
+  if (!list.length) return fail(res, 404, 'مفيش طلب بالكود ده');
   sendJSON(res, 200, { orders: list });
 });
 
@@ -379,6 +428,51 @@ route('GET', '/api/merchant/overview', (req, res) => {
     products: db.products.filter(p => p.store_id === store.id).map(publicProduct),
     orders: db.orders.filter(o => o.store_id === store.id).map(publicOrder),
   });
+});
+
+route('POST', '/api/merchant/products/:id/image', async (req, res, q, p) => {
+  const u = requireMerchant(req, res); if (!u) return;
+  const prod = db.products.find(x => x.id === p.id && x.store_id === u.store_id);
+  if (!prod) return fail(res, 404, 'الصنف غير موجود');
+  const b = await readBody(req);
+  const m = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(String(b.data || ''));
+  if (!m) return fail(res, 400, 'صيغة الصورة غير مدعومة');
+  const buf = Buffer.from(m[2], 'base64');
+  if (!buf.length) return fail(res, 400, 'الصورة فاضية');
+  if (buf.length > 1600000) return fail(res, 400, 'حجم الصورة كبير، جرب صورة أصغر');
+  const imgId = await saveImage(m[1], buf);
+  prod.image = '/img/' + imgId;
+  await saveDB();
+  sendJSON(res, 200, { image: prod.image, product: publicProduct(prod) });
+});
+
+route('DELETE', '/api/merchant/products/:id/image', async (req, res, q, p) => {
+  const u = requireMerchant(req, res); if (!u) return;
+  const prod = db.products.find(x => x.id === p.id && x.store_id === u.store_id);
+  if (!prod) return fail(res, 404, 'الصنف غير موجود');
+  prod.image = '';
+  await saveDB();
+  sendJSON(res, 200, { ok: true });
+});
+
+route('GET', '/img/:id', async (req, res, q, p) => {
+  const img = await readImage(p.id);
+  if (!img) return fail(res, 404, 'الصورة غير موجودة');
+  res.writeHead(200, { 'Content-Type': img.mime, 'Content-Length': img.buf.length, 'Cache-Control': 'public, max-age=31536000, immutable', 'X-Content-Type-Options': 'nosniff' });
+  res.end(img.buf);
+});
+
+route('GET', '/api/merchant/stream', (req, res, q) => {
+  const token = String(q.token || '');
+  const session = db.sessions[token];
+  const user = session ? db.users.find(x => x.id === session.user_id) : null;
+  if (!user || user.role !== 'merchant') return fail(res, 403, 'غير مسموح');
+  res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+  res.write('retry: 5000\n\n');
+  const entry = { res, storeId: user.store_id };
+  orderStreams.add(entry);
+  const ping = setInterval(() => { try { res.write(': ping\n\n'); } catch (e) {} }, 25000);
+  req.on('close', () => { clearInterval(ping); orderStreams.delete(entry); });
 });
 
 route('PUT', '/api/merchant/store', async (req, res) => {
@@ -601,7 +695,7 @@ const server = http.createServer(async (req, res) => {
   try {
     const u = new URL(req.url, 'http://x');
     const pathname = decodeURIComponent(u.pathname);
-    if (pathname.startsWith('/api/')) {
+    if (pathname.startsWith('/api/') || pathname.startsWith('/img/')) {
       const q = Object.fromEntries(u.searchParams.entries());
       for (const r of routes) {
         if (r.method !== req.method) continue;
