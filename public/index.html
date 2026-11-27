@@ -90,5 +90,10 @@
   <script src="/js/common.js"></script>
   <script src="/js/effects.js"></script>
   <script src="/js/home.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      addEventListener('load', function () { navigator.serviceWorker.register('/sw.js').catch(function () {}); });
+    }
+  </script>
 </body>
 </html>
