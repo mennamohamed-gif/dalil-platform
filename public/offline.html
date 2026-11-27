@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>دليل — بيتم تجهيز الموقع</title>
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      background: #0b0f1a; color: #e8ecf5; font-family: 'Cairo', system-ui, sans-serif;
+      background-image: radial-gradient(circle at 20% 10%, rgba(99,102,241,.25), transparent 45%),
+                        radial-gradient(circle at 80% 90%, rgba(34,211,238,.18), transparent 45%);
+      padding: 24px;
+    }
+    .card { text-align: center; max-width: 420px; }
+    .logo { width: 74px; height: 74px; margin: 0 auto 18px; border-radius: 22px;
+      background: linear-gradient(135deg, #22d3ee, #6366f1); display: flex; align-items: center;
+      justify-content: center; font-size: 34px; box-shadow: 0 12px 40px rgba(99,102,241,.35); }
+    h1 { font-size: 26px; margin: 0 0 10px; font-weight: 800; }
+    p { margin: 0; color: #9aa6bd; line-height: 1.8; font-size: 15px; }
+    .spinner { width: 34px; height: 34px; margin: 26px auto 0; border-radius: 50%;
+      border: 3px solid rgba(255,255,255,.14); border-top-color: #22d3ee; animation: spin 900ms linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .slow { margin-top: 18px; font-size: 13px; color: #6b7794; }
+    button { margin-top: 18px; padding: 12px 22px; border-radius: 14px; border: 0; cursor: pointer;
+      background: linear-gradient(135deg, #22d3ee, #6366f1); color: #06121f; font-weight: 800;
+      font-family: inherit; font-size: 15px; display: none; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">📍</div>
+    <h1>بيتم تجهيز الموقع…</h1>
+    <p>الموقع كان في وضع السكون، وبنصحّيه دلوقتي. ثواني وهتفتح لوحدها.</p>
+    <div class="spinner" id="spin"></div>
+    <div class="slow" id="slow"></div>
+    <button id="retry">جرّب تاني</button>
+  </div>
+  <script>
+    (function () {
+      var target = location.pathname + location.search;
+      try {
+        var p = new URLSearchParams(location.search);
+        var to = p.get('to');
+        if (to && to.charAt(0) === '/' && to.charAt(1) !== '/') target = to;
+      } catch (e) {}
+      var started = Date.now();
+      var tries = 0;
+      var maxMs = 60000;
+      var spin = document.getElementById('spin');
+      var slow = document.getElementById('slow');
+      var retry = document.getElementById('retry');
+
+      function go() { location.replace(target); }
+
+      function attempt() {
+        tries++;
+        var ctl = new AbortController();
+        var t = setTimeout(function () { ctl.abort(); }, 8000);
+        fetch('/api/bootstrap?wake=' + tries, { cache: 'no-store', signal: ctl.signal })
+          .then(function (r) { clearTimeout(t); return r.ok; })
+          .catch(function () { return false; })
+          .then(function (ok) {
+            if (ok) { go(); return; }
+            if (Date.now() - started > maxMs) { finish(); return; }
+            if (Date.now() - started > 12000) slow.textContent = 'الموقع بياخد وقت أطول من المعتاد…';
+            setTimeout(attempt, 2500);
+          });
+      }
+
+      function finish() {
+        spin.style.display = 'none';
+        slow.textContent = 'الموقع لسه صاحي بالكامل. جرّب تدوس تحت.';
+        retry.style.display = 'inline-block';
+      }
+
+      retry.addEventListener('click', function () {
+        started = Date.now(); tries = 0;
+        retry.style.display = 'none'; spin.style.display = 'block';
+        slow.textContent = '';
+        attempt();
+      });
+
+      attempt();
+    })();
+  </script>
+</body>
+</html>
