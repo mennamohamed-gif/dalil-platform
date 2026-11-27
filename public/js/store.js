@@ -38,7 +38,7 @@ function renderStore() {
     <div class="store-hero" style="--cat-color:${esc(s.category_color)}">
       <div class="store-hero-cover">
         ${icon(s.category_icon)}
-        <span class="badge-open">مفتوح</span>
+        ${s.open_state && s.open_state.open === false ? '<span class="badge-open" style="background:#b4232a">مقفول الآن</span>' : '<span class="badge-open">مفتوح</span>'}
         ${s.featured ? `<span class="badge-featured">${icon('spark')} مميز</span>` : ''}
       </div>
       <div class="store-hero-body">
@@ -47,7 +47,7 @@ function renderStore() {
         <p class="store-desc mt-2">${esc(s.description || '')}</p>
         <div class="store-hero-info">
           ${s.address ? `<span>${icon('location')} ${esc(s.address)}</span>` : ''}
-          ${s.hours ? `<span>${icon('clock')} ${esc(s.hours)}</span>` : ''}
+          ${s.open_time && s.close_time ? `<span>${icon('clock')} من ${esc(s.open_time)} لـ ${esc(s.close_time)}</span>` : (s.hours ? `<span>${icon('clock')} ${esc(s.hours)}</span>` : '')}
           ${s.phone ? `<a href="tel:${esc(s.phone)}">${icon('phone')} ${esc(s.phone)}</a>` : ''}
           ${s.phone ? `<a href="${waLink(s.phone)}" target="_blank" rel="noopener">${icon('whatsapp')} واتساب</a>` : ''}
           ${s.delivery ? `<span>${icon('delivery')} توصيل متاح (${s.delivery_fee ? money(s.delivery_fee) : 'مجاني'})</span>` : '<span>' + icon('bag') + ' استلام من المحل</span>'}
@@ -89,8 +89,9 @@ function productHTML(p) {
     <p class="pdesc">${esc(p.description || '')}${p.duration ? ' — المدة: ' + esc(p.duration) : ''}</p>
     <div class="flex-between">
       <span class="product-price">${money(p.price)} <small>${p.kind === 'service' ? '/ الخدمة' : ''}</small></span>
+      ${!off && p.stock != null && p.stock <= 5 ? `<small class="text-muted" style="font-size:12px">باقي ${p.stock} بس</small>` : ''}
     </div>
-    ${off ? '<span class="text-muted" style="font-size:13px">غير متاح حالياً</span>' : `
+    ${off ? `<span class="text-muted" style="font-size:13px">${p.stock === 0 ? 'خلص من المخزن' : 'غير متاح حالياً'}</span>` : `
     <div class="qty-row">
       <span class="stepper">
         <button onclick="chQty('${p.id}',-1)">−</button>
