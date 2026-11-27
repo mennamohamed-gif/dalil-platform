@@ -17,7 +17,7 @@ function renderLogin() {
         <div class="field"><label>كلمة المرور</label><input name="password" type="password" required autocomplete="current-password" placeholder="••••••••"></div>
         <button class="btn btn-gold btn-block" type="submit" id="loginBtn">${icon('shield')} دخول</button>
       </form>
-      <div class="demo-hint">الحساب الافتراضي: admin / dalil2026<br>غيّر كلمة المرور من اللوحة بعد أول دخول</div>
+      <div class="demo-hint">دخول الإدارة فقط — لو نسيت كلمة السر تواصل مع صاحب المنصة</div>
       <div class="auth-links"><a href="/">← العودة إلى الرئيسية</a></div>
     </div>
   </div>`;
