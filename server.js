@@ -12,6 +12,8 @@ const crypto = require('crypto');
 
 const PORT = process.env.PORT || 3000;
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || ''; // كلمة سر الأدمن تُدار من متغير البيئة
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // الجلسة تنتهي بعد 30 يوم من آخر استخدام
+const CAIRO_OFFSET_MIN = 120; // توقيت القاهرة UTC+2
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const DATA_DIR = path.join(ROOT, 'data');
@@ -247,9 +249,34 @@ function pushNewOrder(storeId, order) {
 function publicStore(s) {
   const cat = db.categories.find(c => c.id === s.category_id);
   const count = db.products.filter(p => p.store_id === s.id).length;
-  return Object.assign({}, s, { category_name: cat ? cat.name : '', category_icon: cat ? cat.icon : 'store', category_color: cat ? cat.color : '#6366f1', product_count: count });
+  return Object.assign({}, s, { category_name: cat ? cat.name : '', category_icon: cat ? cat.icon : 'store', category_color: cat ? cat.color : '#6366f1', product_count: count, open_state: storeOpenState(s) });
 }
-function publicProduct(p) { const { available } = p; return Object.assign({}, p, { available: available !== false }); }
+function stockLeft(p) { return (p.stock == null || p.stock === '') ? null : Math.max(0, Number(p.stock) || 0); }
+function publicProduct(p) {
+  const left = stockLeft(p);
+  return Object.assign({}, p, { stock: left, available: p.available !== false && (left == null || left > 0) });
+}
+/* ---------- مواعيد العمل ---------- */
+function hhmm(v) { const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(String(v || '').trim()); return m ? (+m[1]) * 60 + (+m[2]) : null; }
+function storeOpenState(s) {
+  const o = hhmm(s.open_time), c = hhmm(s.close_time);
+  if (o == null || c == null || o === c) return { open: true, always: true, open_time: '', close_time: '' };
+  const d = new Date(Date.now() + CAIRO_OFFSET_MIN * 60000);
+  const cur = d.getUTCHours() * 60 + d.getUTCMinutes();
+  const open = o < c ? (cur >= o && cur < c) : (cur >= o || cur < c);
+  return { open, always: false, open_time: s.open_time, close_time: s.close_time };
+}
+/* ---------- حد المحاولات ---------- */
+const rateBuckets = new Map();
+function clientIp(req) { return String((req.headers['x-forwarded-for'] || '').split(',')[0] || req.socket.remoteAddress || 'unknown').trim(); }
+function rateLimit(key, max, windowMs) {
+  const now = Date.now();
+  const rec = rateBuckets.get(key);
+  if (!rec || now > rec.reset) { rateBuckets.set(key, { n: 1, reset: now + windowMs }); return true; }
+  rec.n++;
+  if (rateBuckets.size > 5000) { for (const [k, v] of rateBuckets) if (now > v.reset) rateBuckets.delete(k); }
+  return rec.n <= max;
+}
 function publicOrder(o) {
   return { id: o.id, code: o.code, track_code: o.track_code || '', store_id: o.store_id, store_name: o.store_name, type: o.type, items: o.items, customer: o.customer, appointment: o.appointment, fulfillment: o.fulfillment, delivery_fee: o.delivery_fee, total: o.total, status: o.status, created_at: o.created_at };
 }
@@ -259,8 +286,13 @@ function authUser(req) {
   const h = req.headers['authorization'] || '';
   const token = h.startsWith('Bearer ') ? h.slice(7) : null;
   if (!token || !db.sessions[token]) return null;
-  const user = db.users.find(u => u.id === db.sessions[token].user_id);
-  return user ? { user, token } : null;
+  const sess = db.sessions[token];
+  const now = Date.now();
+  if (sess.expires_at && Date.parse(sess.expires_at) < now) { delete db.sessions[token]; return null; }
+  const user = db.users.find(u => u.id === sess.user_id);
+  if (!user) { delete db.sessions[token]; return null; }
+  if (!sess.expires_at || Date.parse(sess.expires_at) - now < SESSION_TTL_MS / 2) sess.expires_at = new Date(now + SESSION_TTL_MS).toISOString();
+  return { user, token };
 }
 
 /* ------------------------- الخادم ------------------------- */
@@ -323,6 +355,7 @@ route('GET', '/api/stores/:id', (req, res, q, p) => {
 });
 
 route('POST', '/api/orders', async (req, res) => {
+  if (!rateLimit('order:' + clientIp(req), 20, 10 * 60000)) return fail(res, 429, 'محاولات كتير — استنى شوية وحاول تاني');
   const b = await readBody(req);
   const store = db.stores.find(s => s.id === b.store_id && s.status === 'active');
   if (!store) return fail(res, 404, 'المتجر غير موجود');
@@ -340,6 +373,15 @@ route('POST', '/api/orders', async (req, res) => {
     if (!prod) return fail(res, 400, 'صنف غير موجود في هذا المتجر');
     const qty = Math.max(1, Math.min(99, parseInt(it.qty, 10) || 1));
     items.push({ product_id: prod.id, name: prod.name, price: prod.price, qty, kind: prod.kind });
+  }
+  if (type === 'order') {
+    const st = storeOpenState(store);
+    if (!st.open) return fail(res, 400, 'المحل مقفول حالياً — مواعيد العمل من ' + st.open_time + ' لـ ' + st.close_time);
+  }
+  for (const it of items) {
+    const prod = db.products.find(x => x.id === it.product_id);
+    const left = stockLeft(prod);
+    if (left != null && it.qty > left) return fail(res, 400, left === 0 ? ('"' + prod.name + '" خلص من المخزن') : ('الكمية المتاحة من "' + prod.name + '" هي ' + left + ' بس'));
   }
   if (type === 'booking') {
     if (!b.appointment || !b.appointment.date || !b.appointment.time) return fail(res, 400, 'اختر يوم ووقت الحجز');
@@ -362,6 +404,11 @@ route('POST', '/api/orders', async (req, res) => {
     fulfillment: type === 'order' ? fulfillment : null, delivery_fee,
     total: subtotal + delivery_fee, status: 'new', track_code: newTrackCode(), created_at: nowISO(),
   };
+  for (const it of items) {
+    const prod = db.products.find(x => x.id === it.product_id);
+    const left = stockLeft(prod);
+    if (left != null) prod.stock = Math.max(0, left - it.qty);
+  }
   db.orders.unshift(order);
   await saveDB();
   pushNewOrder(order.store_id, order);
@@ -379,11 +426,12 @@ route('GET', '/api/orders', (req, res, q) => {
 /* ---------- الدخول ---------- */
 
 route('POST', '/api/login', async (req, res) => {
+  if (!rateLimit('login:' + clientIp(req), 10, 15 * 60000)) return fail(res, 429, 'محاولات دخول كتير — استنى ربع ساعة وحاول تاني');
   const b = await readBody(req);
   const user = db.users.find(u => u.username === String(b.username || '').trim());
   if (!user || !verifyPassword(b.password || '', user)) return fail(res, 401, 'اسم المستخدم أو كلمة السر غير صحيحة');
   const token = crypto.randomBytes(24).toString('hex');
-  db.sessions[token] = { user_id: user.id, created_at: nowISO() };
+  db.sessions[token] = { user_id: user.id, created_at: nowISO(), expires_at: new Date(Date.now() + SESSION_TTL_MS).toISOString() };
   await saveDB();
   sendJSON(res, 200, { token, role: user.role, name: user.name, store_id: user.store_id });
 });
@@ -484,6 +532,7 @@ route('PUT', '/api/merchant/store', async (req, res) => {
   for (const k of ['name', 'description', 'phone', 'address', 'hours']) {
     if (typeof b[k] === 'string' && b[k].trim()) store[k] = b[k].trim();
   }
+  for (const k of ['open_time', 'close_time']) { if (typeof b[k] === 'string') store[k] = b[k].trim(); }
   if (typeof b.delivery === 'boolean') store.delivery = b.delivery;
   if (b.delivery_fee != null && !isNaN(+b.delivery_fee) && +b.delivery_fee >= 0) store.delivery_fee = +b.delivery_fee;
   await saveDB();
@@ -496,7 +545,7 @@ route('POST', '/api/merchant/products', async (req, res) => {
   if (!b.name || String(b.name).trim().length < 2) return fail(res, 400, 'اكتب اسم الصنف');
   const price = +b.price;
   if (isNaN(price) || price < 0) return fail(res, 400, 'اكتب سعراً صحيحاً');
-  const p = { id: id('p'), store_id: u.store_id, name: String(b.name).trim(), description: String(b.description || '').trim(), price, kind: b.kind === 'service' ? 'service' : 'product', duration: String(b.duration || '').trim(), image: String(b.image || '').trim(), available: b.available !== false };
+  const p = { id: id('p'), store_id: u.store_id, name: String(b.name).trim(), description: String(b.description || '').trim(), price, kind: b.kind === 'service' ? 'service' : 'product', duration: String(b.duration || '').trim(), image: String(b.image || '').trim(), stock: (b.stock === '' || b.stock == null) ? null : Math.max(0, parseInt(b.stock, 10) || 0), available: b.available !== false };
   db.products.push(p);
   await saveDB();
   sendJSON(res, 201, { product: publicProduct(p) });
@@ -513,6 +562,7 @@ route('PUT', '/api/merchant/products/:id', async (req, res, q, p) => {
   if (b.kind === 'service' || b.kind === 'product') prod.kind = b.kind;
   if (typeof b.duration === 'string') prod.duration = b.duration.trim();
   if (typeof b.image === 'string') prod.image = b.image.trim();
+  if (b.stock !== undefined) prod.stock = (b.stock === '' || b.stock === null) ? null : Math.max(0, parseInt(b.stock, 10) || 0);
   if (typeof b.available === 'boolean') prod.available = b.available;
   await saveDB();
   sendJSON(res, 200, { product: publicProduct(prod) });
