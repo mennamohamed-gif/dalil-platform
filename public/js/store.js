@@ -51,6 +51,7 @@ function renderStore() {
           ${s.phone ? `<a href="tel:${esc(s.phone)}">${icon('phone')} ${esc(s.phone)}</a>` : ''}
           ${s.phone ? `<a href="${waLink(s.phone)}" target="_blank" rel="noopener">${icon('whatsapp')} واتساب</a>` : ''}
           ${s.delivery ? `<span>${icon('delivery')} توصيل متاح (${s.delivery_fee ? money(s.delivery_fee) : 'مجاني'})</span>` : '<span>' + icon('bag') + ' استلام من المحل</span>'}
+          <button class="btn btn-sm btn-ghost" style="padding:6px 12px" onclick="openComplaintForm({storeId:'${esc(s.id)}',storeName:'${esc(s.name)}'})">${icon('note')} شكوى</button>
         </div>
       </div>
     </div>
