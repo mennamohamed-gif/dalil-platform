@@ -167,6 +167,14 @@ window.openCart = function () {
               </div>
             </div>
             <div class="field hidden" id="addrField"><label>العنوان بالتفصيل *</label><textarea name="address" placeholder="الشارع، رقم العمارة، الدور، علامة مميزة"></textarea></div>`}
+          ${!hasService ? `
+          <div class="field"><label>طريقة الدفع</label>
+            <div class="radio-cards">
+              <span class="radio-card"><input type="radio" name="payment" id="pCash" value="cash" checked><label for="pCash">${icon('bag')} كاش عند الاستلام</label></span>
+              ${STORE.payments && STORE.payments.instapay ? `<span class="radio-card"><input type="radio" name="payment" id="pInsta" value="instapay"><label for="pInsta">${icon('card')} تحويل إنستاباي</label></span>` : ''}
+            </div>
+            ${STORE.payments && STORE.payments.instapay ? `<p class="text-muted" style="font-size:12.5px;margin:6px 0 0">تحويل إنستاباي على: <b dir="ltr">${esc(STORE.payments.instapay)}</b> — وبعد الطلب هيظهرلك كود مرجعي تكتبه في خانة الملاحظات في التحويل</p>` : ''}
+          </div>` : ''}
           <div class="field"><label>ملاحظات (اختياري)</label><input name="notes" placeholder="أي تفاصيل تانية"></div>
         </form>`}
     </div>
@@ -210,6 +218,7 @@ window.openCart = function () {
         notes: f.notes.value.trim(),
       },
       fulfillment: f.fulfillment ? f.fulfillment.value : 'pickup',
+      payment: f.payment ? f.payment.value : 'cash',
       appointment: hasService ? { date: f.date.value, time: f.time.value } : null,
     };
     try {
@@ -259,6 +268,12 @@ function showSuccess(order) {
         ${order.track_code ? `<p class="text-muted mt-2" style="font-size:13px">كود تتبع الطلب (احتفظ بيه):</p><div class="order-code" dir="ltr" style="letter-spacing:2px">${esc(order.track_code)}</div>` : ''}
         ${order.appointment ? `<p class="text-muted">الموعد: ${esc(order.appointment.date)} — ${esc(order.appointment.time)}</p>` : ''}
         <p class="text-muted">الإجمالي: <b style="color:var(--gold-2)">${money(order.total)}</b></p>
+        ${order.payment === 'instapay' ? `<div class="mt-2" style="background:rgba(255,255,255,.05);border-radius:14px;padding:12px">
+          <p class="text-muted" style="font-size:13px;margin:0 0 6px">حوّل <b style="color:var(--gold-2)">${money(order.total)}</b> على إنستاباي: <b dir="ltr">${esc((STORE.payments && STORE.payments.instapay) || '')}</b></p>
+          <p class="text-muted" style="font-size:13px;margin:0 0 6px">واكتب الكود المرجعي ده في ملاحظات التحويل:</p>
+          <div class="order-code" dir="ltr">${esc(order.payment_ref || order.code)}</div>
+          <p class="text-muted" style="font-size:12px;margin:6px 0 0">الطلب مش هيبدأ التنفيذ غير بعد ما المحل يتأكد من التحويل.</p>
+        </div>` : ''}
         <p class="text-muted mt-2" style="font-size:13px">هيتم مراجعة ${order.type === 'booking' ? 'حجزك' : 'طلبك'} من ${esc(order.store_name)}. كود التتبع محفوظ على الجهاز ده، وتقدر تتابع بيه من صفحة التتبع.</p>
         <a class="btn mt-3" href="/track.html${order.track_code ? '?code=' + encodeURIComponent(order.track_code) : ''}">${icon('search')} تتبع الحالة</a>
       </div>
