@@ -60,6 +60,7 @@ function renderShell() {
     ['stores', 'store', 'المتاجر'],
     ['categories', 'grid', 'التصنيفات'],
     ['orders', 'bell', 'الطلبات'],
+    ['complaints', 'note', 'الشكاوى'],
     ['users', 'users', 'الحسابات'],
     ['security', 'lock', 'كلمة المرور'],
   ];
@@ -97,6 +98,7 @@ function renderView() {
   else if (view === 'stores') m.innerHTML = storesView();
   else if (view === 'categories') m.innerHTML = categoriesView();
   else if (view === 'orders') m.innerHTML = ordersView();
+  else if (view === 'complaints') m.innerHTML = complaintsView();
   else if (view === 'users') m.innerHTML = usersView();
   else m.innerHTML = securityView();
   bindView(m);
@@ -437,3 +439,42 @@ function bindView(m) {
 }
 
 if (API.token()) loadDash(); else renderLogin();
+
+function complaintsView() {
+  const cs = DATA.complaints || [];
+  const open = cs.filter(c => (c.status || 'new') === 'new').length;
+  return `
+    <div class="flex-between mb-3">
+      <div><h2 class="dash-title">الشكاوى (${cs.length})</h2><p class="dash-sub" style="margin:4px 0 0">${open ? open + ' شكوى جديدة محتاجة متابعة' : 'مفيش شكاوى جديدة'}</p></div>
+      <button class="btn btn-sm btn-ghost" onclick="refresh()">${icon('clock')} تحديث</button>
+    </div>
+    <div class="panel"><div class="table-wrap">
+    ${!cs.length ? `<div class="empty">${icon('note')}<b>لا توجد شكاوى</b>أي شكوى من العملاء هتظهر هنا</div>` : `
+      <table class="table">
+        <thead><tr><th>الشكوى</th><th>المتجر</th><th>العميل</th><th>التفاصيل</th><th>الحالة</th></tr></thead>
+        <tbody>
+          ${cs.map(c => `
+          <tr>
+            <td><b>${esc(c.order_code || 'بدون طلب')}</b><br><span class="text-muted" style="font-size:12px">${fmtDate(c.created_at)}</span></td>
+            <td>${esc(c.store_name)}</td>
+            <td><b>${esc(c.name)}</b><br><a href="tel:${esc(c.phone)}" style="color:var(--blue);font-size:13px" dir="ltr">${esc(c.phone)}</a></td>
+            <td style="max-width:320px">${esc(c.message)}${c.resolved_at ? `<br><span class="text-muted" style="font-size:12px">اتقفلت ${fmtDate(c.resolved_at)}</span>` : ''}</td>
+            <td><select class="status-select" onchange="adminSetComplaint('${c.id}', this.value)">
+              <option value="new" ${(c.status || 'new') === 'new' ? 'selected' : ''}>جديدة</option>
+              <option value="resolved" ${c.status === 'resolved' ? 'selected' : ''}>تم حلها</option>
+            </select></td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`}
+    </div></div>`;
+}
+
+window.adminSetComplaint = async function (cid, status) {
+  try {
+    await API.put('/api/admin/complaints/' + cid, { status });
+    const c = (DATA.complaints || []).find(x => x.id === cid);
+    if (c) { c.status = status; c.resolved_at = status === 'resolved' ? new Date().toISOString() : null; }
+    toast(status === 'resolved' ? 'تم قفل الشكوى' : 'الشكوى رجعت جديدة');
+    renderView();
+  } catch (e) { toast(e.message, true); }
+};
