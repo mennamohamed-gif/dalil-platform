@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>دليل — كل حاجة حواليك في مكان واحد</title>
+  <meta name="description" content="دليل: منصة واحدة تجمع كل محلات وخدمات منطقتك — صيدليات، عيادات، مطاعم، كافيهات. اطلب أو احجز أونلاين في ثواني.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><text y='19' font-size='19'>📍</text></svg>">
+</head>
+<body>
+  <div id="topbar"></div>
+
+  <section class="hero">
+    <div class="container hero-grid">
+      <div>
+        <span class="hero-badge"><span class="dot"></span> اطلب واحجز أونلاين — يوصل للمحل فوراً</span>
+        <h1>كل حاجة حواليك،<br>في <span class="grad">مكان واحد</span></h1>
+        <p class="lead">صيدلية الساعة 2 بالليل؟ كشف دكتور النهارده؟ أكل يوصل سخن؟ دليل بيجمعلك كل محلات وخدمات منطقتك في مكان واحد — تتصفح، تطلب أو تحجز في ثواني، وتتابع طلبك لحد ما يوصلك.</p>
+        <form class="searchbar" id="searchForm">
+          <input type="text" id="searchInput" placeholder="دوّر على أي حاجة... صيدلية، مطعم، دكتور">
+          <button class="btn" type="submit" id="searchBtn"></button>
+        </form>
+        <div class="hero-stats" id="heroStats"></div>
+      </div>
+      <div class="scene" id="scene">
+        <div class="scene-inner" id="sceneInner">
+          <div class="cube-wrap"><div class="cube" id="cube"></div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="marquee" dir="ltr"><div class="marquee-track" id="marquee"></div></div>
+
+  <section class="section" id="cats">
+    <div class="container">
+      <div class="section-head reveal">
+        <span class="kicker">الأقسام</span>
+        <h2>عايز إيه النهارده؟</h2>
+        <div class="title-line"></div>
+      </div>
+      <div class="cat-grid" id="catGrid"><div class="loading"><div class="spinner"></div>بنجهّزلك كل حاجة...</div></div>
+    </div>
+  </section>
+
+  <section class="section" id="stores" style="padding-top:10px">
+    <div class="container">
+      <div class="section-head reveal">
+        <span class="kicker">الدليل</span>
+        <h2>الأماكن المتاحة دلوقتي</h2>
+        <div class="title-line"></div>
+      </div>
+      <div class="cat-row" id="chipRow"></div>
+      <div class="stores-grid" id="storesGrid"><div class="loading"><div class="spinner"></div>بنجهّزلك كل حاجة...</div></div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="container">
+      <div class="section-head reveal">
+        <span class="kicker">٣ خطوات وبس</span>
+        <h2>إزاي تطلب من دليل؟</h2>
+        <div class="title-line"></div>
+      </div>
+      <div class="steps" id="steps"></div>
+    </div>
+  </section>
+
+  <section class="section" id="about">
+    <div class="container">
+      <div class="about-card reveal">
+        <div class="section-head" style="margin-bottom:14px">
+          <span class="kicker">ليه دليل؟</span>
+          <h2>عشان وقتك أغلى من الدوران</h2>
+          <div class="title-line"></div>
+        </div>
+        <p>بدل ما تدور في الجروبات وتسأل "مين يعرف صيدلية مفتوحة؟"، دليل جابلك الإجابة: كل المحلات والخدمات ببياناتها الحقيقية، محدّثة لحظة بلحظة من أصحابها نفسهم. تطلب أو تحجز من مكانك، والمحل يستقبل طلبك في نفس الثانية.</p>
+        <p>عندك محل أو شغلانة؟ سجّل في لوحة المحل وخلّي المنطقة كلها توصلك.</p>
+        <a class="btn mt-3" href="/merchant.html">سجّل محلك مجاناً</a>
+      </div>
+    </div>
+  </section>
+
+  <div id="footer"></div>
+
+  <script src="/js/icons.js"></script>
+  <script src="/js/common.js"></script>
+  <script src="/js/effects.js"></script>
+  <script src="/js/home.js"></script>
+</body>
+</html>
