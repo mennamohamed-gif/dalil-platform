@@ -181,6 +181,7 @@ function productsView() {
           <span class="kind-badge ${p.kind === 'service' ? 'kind-service' : 'kind-product'}">${p.kind === 'service' ? 'خدمة' : 'منتج'}</span>
         </div>
         <span class="pdesc">${esc(p.description || '')}</span>
+        <span class="text-muted" style="font-size:12px">${p.stock == null ? 'المخزون: غير محدود' : (p.stock > 0 ? 'المخزون: ' + p.stock : 'خلص من المخزن')}</span>
         <div class="prow">
           <span class="price">${money(p.price)}</span>
           <span class="actions">
@@ -318,6 +319,7 @@ window.openProductModal = function (pid) {
         </div>
       </div>
       <div class="field"><label>مدة الخدمة (اختياري، للخدمات)</label><input name="duration" value="${p ? esc(p.duration || '') : ''}" placeholder="مثال: 30 دقيقة"></div>
+      <div class="field"><label>الكمية في المخزن (سيبها فاضية = غير محدود)</label><input name="stock" type="number" min="0" step="1" value="${p && p.stock != null ? p.stock : ''}" placeholder="مثال: 20"></div>
       <div class="field">
         <label>صورة الصنف (اختياري)</label>
         <input name="photo" type="file" accept="image/*">
@@ -333,7 +335,7 @@ window.openProductModal = function (pid) {
   document.getElementById('pForm').addEventListener('submit', async e => {
     e.preventDefault();
     const f = e.target;
-    const body = { name: f.name.value, description: f.description.value, price: +f.price.value, kind: f.kind.value, duration: f.duration.value };
+    const body = { name: f.name.value, description: f.description.value, price: +f.price.value, kind: f.kind.value, duration: f.duration.value, stock: f.stock && f.stock.value !== '' ? +f.stock.value : null };
     try {
       let saved = p;
       if (p) { const r = await API.put('/api/merchant/products/' + p.id, body); saved = r.product || p; }
@@ -389,7 +391,11 @@ function settingsView() {
         <div class="field"><label>الوصف</label><textarea name="description">${esc(s.description || '')}</textarea></div>
         <div class="form-grid-2">
           <div class="field"><label>العنوان</label><input name="address" value="${esc(s.address || '')}"></div>
-          <div class="field"><label>مواعيد العمل</label><input name="hours" value="${esc(s.hours || '')}" placeholder="مثال: يومياً 9ص - 11م"></div>
+          <div class="field"><label>مواعيد العمل (نص يظهر للعميل)</label><input name="hours" value="${esc(s.hours || '')}" placeholder="مثال: يومياً 9ص - 11م"></div>
+        </div>
+        <div class="form-grid-2">
+          <div class="field"><label>يفتح الساعة</label><input name="open_time" type="time" value="${esc(s.open_time || '')}"></div>
+          <div class="field"><label>يقفل الساعة</label><input name="close_time" type="time" value="${esc(s.close_time || '')}"></div>
         </div>
         <div class="form-grid-2">
           <div class="field"><label>خدمة التوصيل</label>
@@ -422,7 +428,7 @@ function bindView(m) {
     try {
       const { store } = await API.put('/api/merchant/store', {
         name: f.name.value, phone: f.phone.value, description: f.description.value,
-        address: f.address.value, hours: f.hours.value,
+        address: f.address.value, hours: f.hours.value, open_time: f.open_time.value, close_time: f.close_time.value,
         delivery: f.delivery.value === '1', delivery_fee: +f.delivery_fee.value || 0,
       });
       DATA.store = store;
