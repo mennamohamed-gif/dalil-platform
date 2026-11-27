@@ -1,0 +1,23 @@
+name: keep-warm
+
+# يخلي الموقع صاحي في ساعات الاستخدام (٩ص - ١ص بتوقيت القاهرة = 7-22 UTC)
+# Render بينيم الخدمة المجانية بعد 15 دقيقة سكون، فالبنج كل 10 دقايق بيمنع النوم.
+
+on:
+  schedule:
+    - cron: '*/10 7-22 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping Dalil
+        run: |
+          code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 120 https://dalil-eg.onrender.com/api/bootstrap)
+          echo "HTTP $code"
+          test "$code" = "200"
