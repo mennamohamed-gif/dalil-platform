@@ -249,7 +249,7 @@ function pushNewOrder(storeId, order) {
 function publicStore(s) {
   const cat = db.categories.find(c => c.id === s.category_id);
   const count = db.products.filter(p => p.store_id === s.id).length;
-  return Object.assign({}, s, { category_name: cat ? cat.name : '', category_icon: cat ? cat.icon : 'store', category_color: cat ? cat.color : '#6366f1', product_count: count, open_state: storeOpenState(s) });
+  return Object.assign({}, s, { category_name: cat ? cat.name : '', category_icon: cat ? cat.icon : 'store', category_color: cat ? cat.color : '#6366f1', product_count: count, open_state: storeOpenState(s), payments: { cash: true, instapay: String(s.instapay || '').trim(), gateway: false } });
 }
 function stockLeft(p) { return (p.stock == null || p.stock === '') ? null : Math.max(0, Number(p.stock) || 0); }
 function publicProduct(p) {
@@ -278,7 +278,7 @@ function rateLimit(key, max, windowMs) {
   return rec.n <= max;
 }
 function publicOrder(o) {
-  return { id: o.id, code: o.code, track_code: o.track_code || '', store_id: o.store_id, store_name: o.store_name, type: o.type, items: o.items, customer: o.customer, appointment: o.appointment, fulfillment: o.fulfillment, delivery_fee: o.delivery_fee, total: o.total, status: o.status, created_at: o.created_at };
+  return { id: o.id, code: o.code, track_code: o.track_code || '', store_id: o.store_id, store_name: o.store_name, type: o.type, items: o.items, customer: o.customer, appointment: o.appointment, fulfillment: o.fulfillment, delivery_fee: o.delivery_fee, total: o.total, status: o.status, payment: o.payment === undefined ? 'cash' : o.payment, payment_ref: o.payment_ref || '', created_at: o.created_at };
 }
 function cleanPhone(p) { return String(p || '').replace(/[^0-9+]/g, ''); }
 
@@ -328,6 +328,13 @@ function route(method, pattern, handler) {
 }
 
 /* ---------- واجهات عامة ---------- */
+
+/* بوابة الدفع: المكان الجاهز للربط لاحقاً — لما يبقى عندنا مزود، الدالة دي تتحول لاستدعاء حقيقي */
+function paymentGatewayReady() { return Boolean(process.env.PAYMENT_GATEWAY_KEY); }
+
+route('GET', '/api/payments/config', (req, res) => {
+  sendJSON(res, 200, { methods: ['cash', 'instapay'], gateway: paymentGatewayReady() });
+});
 
 route('GET', '/api/bootstrap', (req, res) => {
   const active = db.stores.filter(s => s.status === 'active');
@@ -396,13 +403,17 @@ route('POST', '/api/orders', async (req, res) => {
       if (!customer.address || String(customer.address).trim().length < 5) return fail(res, 400, 'اكتب العنوان بالتفصيل للتوصيل');
     }
   }
+  if (type === 'order' && b.payment === 'instapay' && !String(store.instapay || '').trim()) return fail(res, 400, 'المحل مش مفعّل الدفع بإنستاباي');
   const subtotal = items.reduce((t, i) => t + i.price * i.qty, 0);
   const order = {
     id: id('o'), code: orderCode(), store_id: store.id, store_name: store.name,
     type, items, customer: { name: String(customer.name).trim(), phone, address: String(customer.address || '').trim(), notes: String(customer.notes || '').trim() },
     appointment: type === 'booking' ? { date: b.appointment.date, time: b.appointment.time } : null,
     fulfillment: type === 'order' ? fulfillment : null, delivery_fee,
-    total: subtotal + delivery_fee, status: 'new', track_code: newTrackCode(), created_at: nowISO(),
+    total: subtotal + delivery_fee, status: 'new', track_code: newTrackCode(),
+    payment: type === 'order' ? (b.payment === 'instapay' ? 'instapay' : 'cash') : null,
+    payment_ref: type === 'order' ? orderCode() : null,
+    created_at: nowISO(),
   };
   for (const it of items) {
     const prod = db.products.find(x => x.id === it.product_id);
@@ -532,7 +543,7 @@ route('PUT', '/api/merchant/store', async (req, res) => {
   for (const k of ['name', 'description', 'phone', 'address', 'hours']) {
     if (typeof b[k] === 'string' && b[k].trim()) store[k] = b[k].trim();
   }
-  for (const k of ['open_time', 'close_time']) { if (typeof b[k] === 'string') store[k] = b[k].trim(); }
+  for (const k of ['open_time', 'close_time', 'instapay']) { if (typeof b[k] === 'string') store[k] = b[k].trim(); }
   if (typeof b.delivery === 'boolean') store.delivery = b.delivery;
   if (b.delivery_fee != null && !isNaN(+b.delivery_fee) && +b.delivery_fee >= 0) store.delivery_fee = +b.delivery_fee;
   await saveDB();
