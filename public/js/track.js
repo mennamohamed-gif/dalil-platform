@@ -28,6 +28,7 @@ function orderCard(o) {
       <span class="text-muted" style="font-size:12.5px">${fmtDate(o.created_at)}</span>
       <b style="color:var(--gold-2)">${money(o.total)}</b>
     </div>
+    <div class="mt-2"><button class="btn btn-sm btn-ghost" onclick="openComplaintForm({storeId:'${esc(o.store_id)}',storeName:'${esc(o.store_name)}',orderCode:'${esc(o.code)}'})">${icon('note')} شكوى على الطلب</button></div>
     ${o.status === 'cancelled'
       ? `<p class="text-muted mt-2" style="font-size:13px">تم إلغاء هذا الطلب. تواصل مع المحل للتفاصيل.</p>`
       : `<div class="timeline">${FLOW.map((s, i) => `<span class="tl-step ${i <= idx ? 'on' : ''}">${FLOW_LABELS[s]}</span>`).join('')}</div>`}
